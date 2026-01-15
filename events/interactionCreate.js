@@ -1,13 +1,10 @@
 const { Events, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 const config = require('../config/config');
-const { startGame } = require('../handlers/gameHandler');
-const { createWaitingEmbed } = require('../commands/start');
+const { getGame } = require('../games/registry');
 
 module.exports = (client, activeGames, waitingGames) => {
   client.on(Events.InteractionCreate, async interaction => {
-    if (!interaction.isButton()) return;
-
-    // Kiểm tra server ID nếu được cấu hình
+    // Kiểm tra server/channel
     if (config.serverId && interaction.guild.id !== config.serverId) {
       return interaction.reply({
         embeds: [new EmbedBuilder().setColor(0xED4245).setDescription('⚠️ Bot chỉ hoạt động trong server được chỉ định!')],
@@ -15,7 +12,6 @@ module.exports = (client, activeGames, waitingGames) => {
       });
     }
 
-    // Kiểm tra channel ID nếu được cấu hình
     if (config.channelId && interaction.channel.id !== config.channelId) {
       return interaction.reply({
         embeds: [new EmbedBuilder().setColor(0xED4245).setDescription('⚠️ Bot chỉ hoạt động trong channel được chỉ định!')],
@@ -25,18 +21,45 @@ module.exports = (client, activeGames, waitingGames) => {
 
     const gameId = interaction.channel.id;
 
-    // Xử lý nút tham gia
-    if (interaction.customId === 'join_game') {
-      if (!waitingGames.has(gameId)) {
+    // Xử lý Select Menu chọn game
+    if (interaction.isStringSelectMenu() && interaction.customId === 'select_game') {
+      const selectedGameId = interaction.values[0];
+      const gameModule = getGame(selectedGameId);
+
+      if (!gameModule || !gameModule.enabled) {
         return interaction.reply({
-          embeds: [new EmbedBuilder().setColor(0xED4245).setDescription('⚠️ Không có game nào đang chờ!')],
+          embeds: [new EmbedBuilder().setColor(0xFEE75C).setDescription('🔜 Game này đang được phát triển!')],
           ephemeral: true
         });
       }
 
-      const waitingGame = waitingGames.get(gameId);
+      if (activeGames.has(gameId) || waitingGames.has(gameId)) {
+        return interaction.reply({
+          embeds: [new EmbedBuilder().setColor(0xED4245).setDescription('⚠️ Đã có game đang chạy hoặc đang chờ!')],
+          ephemeral: true
+        });
+      }
 
-      // Kiểm tra xem đã tham gia chưa
+      await gameModule.createRoom(interaction, waitingGames);
+      return;
+    }
+
+    // Chỉ xử lý button
+    if (!interaction.isButton()) return;
+
+    const waitingGame = waitingGames.get(gameId);
+    if (!waitingGame && ['join_game', 'leave_game', 'force_start'].includes(interaction.customId)) {
+      return interaction.reply({
+        embeds: [new EmbedBuilder().setColor(0xED4245).setDescription('⚠️ Không có game nào đang chờ!')],
+        ephemeral: true
+      });
+    }
+
+    const gameType = waitingGame?.gameType || 'noitu';
+    const gameModule = getGame(gameType);
+
+    // Xử lý nút tham gia
+    if (interaction.customId === 'join_game') {
       if (waitingGame.players.some(p => p.userId === interaction.user.id)) {
         return interaction.reply({
           embeds: [new EmbedBuilder().setColor(0xFEE75C).setDescription('⚠️ Bạn đã tham gia game rồi!')],
@@ -44,7 +67,6 @@ module.exports = (client, activeGames, waitingGames) => {
         });
       }
 
-      // Thêm người chơi
       waitingGame.players.push({
         userId: interaction.user.id,
         id: interaction.user.id,
@@ -52,19 +74,15 @@ module.exports = (client, activeGames, waitingGames) => {
         isActive: true
       });
 
-      // Cập nhật embed
-      const updatedEmbed = createWaitingEmbed(waitingGame.players, waitingGame.minPlayers);
+      const updatedEmbed = gameModule.createWaitingEmbed(waitingGame.players, waitingGame.minPlayers);
       await interaction.update({ embeds: [updatedEmbed] });
 
-      // Kiểm tra xem đã đủ người chơi chưa
       if (waitingGame.players.length >= waitingGame.minPlayers) {
-        if (waitingGame.startTimer) {
-          clearTimeout(waitingGame.startTimer);
-        }
+        if (waitingGame.startTimer) clearTimeout(waitingGame.startTimer);
 
         waitingGame.startTimer = setTimeout(async () => {
           if (waitingGames.has(gameId)) {
-            await startGameAndCleanup(waitingGame, interaction, activeGames, waitingGames, gameId);
+            await startGameAndCleanup(waitingGame, interaction, activeGames, waitingGames, gameId, gameModule);
           }
         }, config.game.startDelay);
       }
@@ -72,14 +90,6 @@ module.exports = (client, activeGames, waitingGames) => {
 
     // Xử lý nút rời phòng
     if (interaction.customId === 'leave_game') {
-      if (!waitingGames.has(gameId)) {
-        return interaction.reply({
-          embeds: [new EmbedBuilder().setColor(0xED4245).setDescription('⚠️ Không có game nào đang chờ!')],
-          ephemeral: true
-        });
-      }
-
-      const waitingGame = waitingGames.get(gameId);
       const playerIndex = waitingGame.players.findIndex(p => p.userId === interaction.user.id);
 
       if (playerIndex === -1) {
@@ -89,32 +99,19 @@ module.exports = (client, activeGames, waitingGames) => {
         });
       }
 
-      // Xóa người chơi
       waitingGame.players.splice(playerIndex, 1);
 
-      // Reset timer nếu không còn đủ người
       if (waitingGame.players.length < waitingGame.minPlayers && waitingGame.startTimer) {
         clearTimeout(waitingGame.startTimer);
         waitingGame.startTimer = null;
       }
 
-      // Cập nhật embed
-      const updatedEmbed = createWaitingEmbed(waitingGame.players, waitingGame.minPlayers);
+      const updatedEmbed = gameModule.createWaitingEmbed(waitingGame.players, waitingGame.minPlayers);
       await interaction.update({ embeds: [updatedEmbed] });
     }
 
-    // Xử lý nút bắt đầu ngay (chỉ chủ phòng hoặc admin)
+    // Xử lý nút bắt đầu ngay
     if (interaction.customId === 'force_start') {
-      if (!waitingGames.has(gameId)) {
-        return interaction.reply({
-          embeds: [new EmbedBuilder().setColor(0xED4245).setDescription('⚠️ Không có game nào đang chờ!')],
-          ephemeral: true
-        });
-      }
-
-      const waitingGame = waitingGames.get(gameId);
-
-      // Kiểm tra quyền (chủ phòng hoặc admin)
       const isCreator = waitingGame.creatorId === interaction.user.id;
       const isAdmin = interaction.member.permissions.has('Administrator');
 
@@ -125,7 +122,6 @@ module.exports = (client, activeGames, waitingGames) => {
         });
       }
 
-      // Kiểm tra đủ người chơi
       if (waitingGame.players.length < waitingGame.minPlayers) {
         return interaction.reply({
           embeds: [new EmbedBuilder().setColor(0xFEE75C).setDescription(`⚠️ Cần tối thiểu **${waitingGame.minPlayers}** người chơi!`)],
@@ -133,57 +129,38 @@ module.exports = (client, activeGames, waitingGames) => {
         });
       }
 
-      // Clear timer cũ nếu có
-      if (waitingGame.startTimer) {
-        clearTimeout(waitingGame.startTimer);
-      }
+      if (waitingGame.startTimer) clearTimeout(waitingGame.startTimer);
 
       await interaction.deferUpdate();
-      await startGameAndCleanup(waitingGame, interaction, activeGames, waitingGames, gameId);
+      await startGameAndCleanup(waitingGame, interaction, activeGames, waitingGames, gameId, gameModule);
     }
   });
 };
 
-// Helper function để bắt đầu game và cleanup
-async function startGameAndCleanup(waitingGame, interaction, activeGames, waitingGames, gameId) {
+// Helper function
+async function startGameAndCleanup(waitingGame, interaction, activeGames, waitingGames, gameId, gameModule) {
   try {
     const channel = interaction.channel;
     const message = await channel.messages.fetch(waitingGame.messageId);
 
-    // Disable tất cả buttons
     const disabledRow = new ActionRowBuilder()
       .addComponents(
-        new ButtonBuilder()
-          .setCustomId('join_game')
-          .setLabel('Game đã bắt đầu')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(true),
-        new ButtonBuilder()
-          .setCustomId('leave_game')
-          .setLabel('Rời phòng')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(true),
-        new ButtonBuilder()
-          .setCustomId('force_start')
-          .setLabel('Đã bắt đầu')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(true)
+        new ButtonBuilder().setCustomId('join_game').setLabel('Game đã bắt đầu').setStyle(ButtonStyle.Secondary).setDisabled(true),
+        new ButtonBuilder().setCustomId('leave_game').setLabel('Rời phòng').setStyle(ButtonStyle.Secondary).setDisabled(true),
+        new ButtonBuilder().setCustomId('force_start').setLabel('Đã bắt đầu').setStyle(ButtonStyle.Secondary).setDisabled(true)
       );
 
     const startingEmbed = new EmbedBuilder()
       .setColor(0x57F287)
-      .setTitle('🎮 GAME NỐI TỪ')
+      .setTitle(`🎮 ${gameModule.name.toUpperCase()}`)
       .setDescription('✅ **Game đang bắt đầu...**')
       .setTimestamp();
 
-    await message.edit({
-      embeds: [startingEmbed],
-      components: [disabledRow]
-    });
+    await message.edit({ embeds: [startingEmbed], components: [disabledRow] });
   } catch (err) {
     console.error('Lỗi khi disable button:', err);
   }
 
-  await startGame(waitingGame, interaction.channel, activeGames);
+  await gameModule.startGame(waitingGame, interaction.channel, activeGames);
   waitingGames.delete(gameId);
 }

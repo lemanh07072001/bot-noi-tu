@@ -1,87 +1,79 @@
-const { getLastSyllable, getFirstSyllable, isValidWord, isValidMeaningfulWord } = require('../utils/wordUtils');
-const { gameStartEmbed, turnEmbed, successEmbed, eliminationEmbed, gameResultEmbed, errorEmbed } = require('../utils/embedBuilder');
-const User = require('../models/User');
-const config = require('../config/config');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const config = require('../../config/config');
+const User = require('../../models/User');
+const { getLastSyllable, getFirstSyllable, isValidWord, isValidMeaningfulWord } = require('./wordUtils');
+const {
+  createWaitingEmbed,
+  createGameStartEmbed,
+  createTurnEmbed,
+  createSuccessEmbed,
+  createEliminationEmbed,
+  createResultEmbed,
+  createErrorEmbed
+} = require('./embeds');
 
-// Helper: Cập nhật điểm người chơi (chỉ tăng điểm, không tăng wins)
+// Cập nhật điểm người chơi
 async function updateUserPoints(userId, username, points) {
   try {
-    const user = await User.findOneAndUpdate(
+    return await User.findOneAndUpdate(
       { userId },
-      {
-        $inc: { points },
-        $set: { username }
-      },
+      { $inc: { points }, $set: { username } },
       { upsert: true, new: true }
     );
-    return user;
   } catch (error) {
     console.error('Lỗi cập nhật điểm:', error);
     return null;
   }
 }
 
-// Helper: Cập nhật wins cho người thắng
+// Cập nhật wins
 async function updateUserWins(userId) {
   try {
-    await User.findOneAndUpdate(
-      { userId },
-      { $inc: { wins: 1 } }
-    );
+    await User.findOneAndUpdate({ userId }, { $inc: { wins: 1 } });
   } catch (error) {
     console.error('Lỗi cập nhật wins:', error);
   }
 }
 
-// Helper: Tính điểm theo thứ hạng
+// Tính điểm theo thứ hạng
 function calculateRankPoints(rank, totalPlayers) {
-  const pointsPerRank = config.game.pointsPerRank;
-  return (totalPlayers - rank) * pointsPerRank;
+  return (totalPlayers - rank) * config.game.pointsPerRank;
 }
 
-// Helper: Xử lý kết thúc game và tính điểm
+// Kết thúc game
 async function handleGameEnd(game, channel, activeGames) {
   const totalPlayers = game.players.length;
   const eliminationOrder = game.eliminationOrder || [];
   const activePlayers = game.players.filter(p => p.isActive);
 
-  // Thêm người còn lại vào danh sách (người thắng)
   if (activePlayers.length === 1) {
     eliminationOrder.push(activePlayers[0]);
   }
 
-  // Đảo ngược để có thứ tự từ winner -> loser
   const rankings = [...eliminationOrder].reverse();
 
-  // Cập nhật điểm cho từng người
   for (let i = 0; i < rankings.length; i++) {
     const player = rankings[i];
     const rank = i + 1;
     const points = calculateRankPoints(rank, totalPlayers);
 
     await updateUserPoints(player.id, player.username, points);
-
-    if (rank === 1) {
-      await updateUserWins(player.id);
-    }
+    if (rank === 1) await updateUserWins(player.id);
   }
 
-  // Gửi embed kết quả
-  const resultEmbed = gameResultEmbed(rankings, totalPlayers);
+  const resultEmbed = createResultEmbed(rankings, totalPlayers);
   await channel.send({ embeds: [resultEmbed] });
   activeGames.delete(game.channelId);
 }
 
-// Helper: Xử lý timeout người chơi
+// Timeout người chơi
 async function handlePlayerTimeout(game, player, channel, activeGames) {
   player.isActive = false;
 
-  // Track thứ tự bị loại
   if (!game.eliminationOrder) game.eliminationOrder = [];
   game.eliminationOrder.push(player);
 
-  // Gửi embed bị loại
-  const elimEmbed = eliminationEmbed(player.username, 'timeout');
+  const elimEmbed = createEliminationEmbed(player.username, 'timeout');
   await channel.send({ embeds: [elimEmbed] });
 
   const activePlayers = game.players.filter(p => p.isActive);
@@ -92,7 +84,7 @@ async function handlePlayerTimeout(game, player, channel, activeGames) {
   return false;
 }
 
-// Chuyển lượt tiếp theo
+// Chuyển lượt
 function nextTurn(game, channel, activeGames) {
   const { players } = game;
   let nextIndex = (game.currentPlayerIndex + 1) % players.length;
@@ -103,9 +95,8 @@ function nextTurn(game, channel, activeGames) {
       const currentPlayer = players[nextIndex];
       const timeoutSeconds = config.game.turnTimeout / 1000;
 
-      // Gửi embed lượt chơi
-      const turnMsg = turnEmbed(currentPlayer, game.lastSyllable, timeoutSeconds);
-      channel.send({ embeds: [turnMsg] });
+      const turnEmbed = createTurnEmbed(currentPlayer, game.lastSyllable, timeoutSeconds);
+      channel.send({ embeds: [turnEmbed] });
 
       game.timer = setTimeout(async () => {
         const gameEnded = await handlePlayerTimeout(game, currentPlayer, channel, activeGames);
@@ -121,6 +112,50 @@ function nextTurn(game, channel, activeGames) {
   }
 }
 
+// Tạo phòng chờ
+async function createRoom(interaction, waitingGames) {
+  const gameId = interaction.channel.id;
+
+  const waitingGame = {
+    channelId: interaction.channel.id,
+    gameType: 'noitu',
+    players: [],
+    minPlayers: config.game.minPlayers,
+    messageId: null,
+    creatorId: interaction.user.id
+  };
+
+  waitingGames.set(gameId, waitingGame);
+
+  const joinButton = new ButtonBuilder()
+    .setCustomId('join_game')
+    .setLabel('Tham gia')
+    .setStyle(ButtonStyle.Success)
+    .setEmoji('🎮');
+
+  const leaveButton = new ButtonBuilder()
+    .setCustomId('leave_game')
+    .setLabel('Rời phòng')
+    .setStyle(ButtonStyle.Danger)
+    .setEmoji('🚪');
+
+  const startButton = new ButtonBuilder()
+    .setCustomId('force_start')
+    .setLabel('Bắt đầu ngay')
+    .setStyle(ButtonStyle.Primary)
+    .setEmoji('▶️');
+
+  const row = new ActionRowBuilder().addComponents(joinButton, leaveButton, startButton);
+  const waitingEmbed = createWaitingEmbed(waitingGame.players, waitingGame.minPlayers);
+
+  await interaction.update({
+    embeds: [waitingEmbed],
+    components: [row]
+  });
+
+  waitingGame.messageId = interaction.message.id;
+}
+
 // Bắt đầu game
 async function startGame(waitingGame, channel, activeGames) {
   if (waitingGame.startTimer) {
@@ -130,6 +165,7 @@ async function startGame(waitingGame, channel, activeGames) {
 
   const game = {
     channelId: channel.id,
+    gameType: 'noitu',
     players: [...waitingGame.players],
     currentPlayerIndex: 0,
     lastWord: null,
@@ -140,7 +176,7 @@ async function startGame(waitingGame, channel, activeGames) {
     eliminationOrder: []
   };
 
-  // Xáo trộn người chơi (Fisher-Yates)
+  // Xáo trộn người chơi
   for (let i = game.players.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [game.players[i], game.players[j]] = [game.players[j], game.players[i]];
@@ -153,8 +189,7 @@ async function startGame(waitingGame, channel, activeGames) {
   const maxPoints = (game.players.length - 1) * config.game.pointsPerRank;
   const pointsInfo = `🥇 ${maxPoints} → 🥈 ${maxPoints - 10} → ... → 0`;
 
-  // Gửi embed game bắt đầu
-  const startEmbed = gameStartEmbed(game.players, timeoutSeconds, pointsInfo);
+  const startEmbed = createGameStartEmbed(game.players, timeoutSeconds, pointsInfo);
   await channel.send({ embeds: [startEmbed] });
 
   game.timer = setTimeout(async () => {
@@ -166,42 +201,34 @@ async function startGame(waitingGame, channel, activeGames) {
   }, config.game.turnTimeout);
 }
 
-// Xử lý từ của người chơi
+// Xử lý từ người chơi
 async function handlePlayerWord(game, message, activeGames) {
   const word = message.content.trim().toLowerCase();
 
-  // Validate cú pháp
   if (!isValidWord(word)) {
-    const errEmbed = errorEmbed('Từ không hợp lệ! Từ phải có ít nhất 2 ký tự và chỉ chứa chữ cái.');
+    const errEmbed = createErrorEmbed('Từ không hợp lệ! Từ phải có ít nhất 2 ký tự và chỉ chứa chữ cái.');
     return message.reply({ embeds: [errEmbed] });
   }
 
-  // Validate nghĩa
   const meaningCheck = await isValidMeaningfulWord(word);
   if (!meaningCheck.valid) {
     const errMsg = meaningCheck.reason === 'not_in_dictionary'
       ? `Từ **${word}** không có trong từ điển!`
       : 'Từ không hợp lệ!';
-    const errEmbed = errorEmbed(errMsg);
-    return message.reply({ embeds: [errEmbed] });
+    return message.reply({ embeds: [createErrorEmbed(errMsg)] });
   }
 
-  // Validate âm tiết đầu (nếu không phải từ đầu tiên)
   if (game.lastWord) {
     const firstSyllable = getFirstSyllable(word);
     if (firstSyllable !== game.lastSyllable) {
-      const errEmbed = errorEmbed(`Từ phải bắt đầu bằng **${game.lastSyllable}**!`);
-      return message.reply({ embeds: [errEmbed] });
+      return message.reply({ embeds: [createErrorEmbed(`Từ phải bắt đầu bằng **${game.lastSyllable}**!`)] });
     }
 
-    // Validate từ trùng
     if (game.usedWords.has(word)) {
-      const errEmbed = errorEmbed(`Từ **${word}** đã được sử dụng!`);
-      return message.reply({ embeds: [errEmbed] });
+      return message.reply({ embeds: [createErrorEmbed(`Từ **${word}** đã được sử dụng!`)] });
     }
   }
 
-  // Clear timer và cập nhật game
   if (game.timer) {
     clearTimeout(game.timer);
     game.timer = null;
@@ -211,16 +238,19 @@ async function handlePlayerWord(game, message, activeGames) {
   game.lastSyllable = getLastSyllable(word);
   game.usedWords.add(word);
 
-  // Gửi embed thành công
   message.react('✅');
-  const successMsg = successEmbed(message.author.username, word, game.lastSyllable);
-  await message.reply({ embeds: [successMsg] });
+  const successEmbed = createSuccessEmbed(message.author.username, word, game.lastSyllable);
+  await message.reply({ embeds: [successEmbed] });
 
   nextTurn(game, message.channel, activeGames);
 }
 
 module.exports = {
-  nextTurn,
+  createRoom,
   startGame,
-  handlePlayerWord
+  handlePlayerWord,
+  nextTurn,
+  handlePlayerTimeout,
+  handleGameEnd,
+  createWaitingEmbed
 };

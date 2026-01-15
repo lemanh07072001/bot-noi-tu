@@ -1,24 +1,60 @@
 const { EmbedBuilder } = require('discord.js');
+const config = require('../../config/config');
 
-// Màu sắc cho các loại embed
+// Màu sắc
 const COLORS = {
-  PRIMARY: 0x5865F2,    // Discord Blurple
-  SUCCESS: 0x57F287,    // Green
-  WARNING: 0xFEE75C,    // Yellow
-  ERROR: 0xED4245,      // Red
-  INFO: 0x5865F2,       // Blue
-  GOLD: 0xF1C40F,       // Gold cho winner
-  PURPLE: 0x9B59B6      // Purple
+  PRIMARY: 0x5865F2,
+  SUCCESS: 0x57F287,
+  WARNING: 0xFEE75C,
+  ERROR: 0xED4245,
+  GOLD: 0xF1C40F,
+  PURPLE: 0x9B59B6
 };
 
-// Embed khi game bắt đầu
-function gameStartEmbed(players, timeoutSeconds, pointsInfo) {
+// Embed phòng chờ
+function createWaitingEmbed(players, minPlayers) {
+  const playerList = players.length > 0
+    ? players.map((p, i) => `\`${i + 1}.\` ${p.username}`).join('\n')
+    : '_Chưa có ai tham gia_';
+
+  const timeoutSeconds = config.game.turnTimeout / 1000;
+
+  return new EmbedBuilder()
+    .setColor(COLORS.PURPLE)
+    .setTitle('🔗 GAME NỐI TỪ - PHÒNG CHỜ')
+    .addFields(
+      {
+        name: `👥 Người chơi (${players.length}/${minPlayers}+)`,
+        value: playerList,
+        inline: true
+      },
+      {
+        name: '📋 Thông tin',
+        value: [
+          `⏱️ Thời gian: **${timeoutSeconds}s**/lượt`,
+          `👤 Tối thiểu: **${minPlayers}** người`,
+          `🏆 Điểm theo thứ hạng`
+        ].join('\n'),
+        inline: true
+      }
+    )
+    .setDescription('Nhấn **🎮 Tham gia** để vào game!')
+    .setFooter({
+      text: players.length >= minPlayers
+        ? '✅ Đủ người! Game sẽ bắt đầu trong 5 giây...'
+        : `⏳ Đang chờ thêm ${minPlayers - players.length} người...`
+    })
+    .setTimestamp();
+}
+
+// Embed game bắt đầu
+function createGameStartEmbed(players, timeoutSeconds, pointsInfo) {
   const playerList = players.map((p, i) => `\`${i + 1}.\` ${p.username}`).join('\n');
   const firstPlayer = players[0];
 
   return new EmbedBuilder()
     .setColor(COLORS.PRIMARY)
-    .setTitle('🎮 GAME NỐI TỪ BẮT ĐẦU!')
+    .setTitle('🔗 GAME NỐI TỪ BẮT ĐẦU!')
     .addFields(
       {
         name: '👥 Người chơi',
@@ -34,7 +70,7 @@ function gameStartEmbed(players, timeoutSeconds, pointsInfo) {
         name: '📝 Quy tắc',
         value: [
           `⏱️ Mỗi lượt có **${timeoutSeconds} giây**`,
-          '🔗 Từ phải bắt đầu bằng **âm tiết cuối** của từ trước',
+          '🔗 Từ bắt đầu bằng **âm tiết cuối** của từ trước',
           '📖 Từ phải **có nghĩa** trong từ điển',
           '🚫 Không được lặp lại từ đã dùng',
           '💀 Hết thời gian = bị loại'
@@ -51,10 +87,10 @@ function gameStartEmbed(players, timeoutSeconds, pointsInfo) {
     .setTimestamp();
 }
 
-// Embed thông báo lượt chơi
-function turnEmbed(player, lastSyllable, timeoutSeconds) {
+// Embed lượt chơi
+function createTurnEmbed(player, lastSyllable, timeoutSeconds) {
   return new EmbedBuilder()
-    .setColor(COLORS.INFO)
+    .setColor(COLORS.PRIMARY)
     .setTitle(`⏰ Lượt của ${player.username}`)
     .setDescription(
       `📝 Từ phải bắt đầu bằng: **${lastSyllable}**\n` +
@@ -63,20 +99,20 @@ function turnEmbed(player, lastSyllable, timeoutSeconds) {
     .setTimestamp();
 }
 
-// Embed khi trả lời đúng
-function successEmbed(username, word, nextSyllable) {
+// Embed trả lời đúng
+function createSuccessEmbed(username, word, nextSyllable) {
   return new EmbedBuilder()
     .setColor(COLORS.SUCCESS)
     .setTitle('✅ Chính xác!')
     .setDescription(
       `**${username}** đã trả lời: \`${word}\`\n\n` +
-      `📝 Từ tiếp theo phải bắt đầu bằng: **${nextSyllable}**`
+      `📝 Từ tiếp theo bắt đầu bằng: **${nextSyllable}**`
     )
     .setTimestamp();
 }
 
-// Embed khi bị loại (timeout)
-function eliminationEmbed(username, reason = 'timeout') {
+// Embed bị loại
+function createEliminationEmbed(username, reason = 'timeout') {
   const reasons = {
     timeout: 'đã hết thời gian',
     invalid: 'trả lời sai'
@@ -90,13 +126,13 @@ function eliminationEmbed(username, reason = 'timeout') {
 }
 
 // Embed kết quả game
-function gameResultEmbed(rankings, totalPlayers) {
+function createResultEmbed(rankings, totalPlayers) {
   const medals = ['🥇', '🥈', '🥉'];
 
-  let resultList = rankings.map((player, i) => {
+  const resultList = rankings.map((player, i) => {
     const rank = i + 1;
     const medal = medals[i] || '📍';
-    const points = (totalPlayers - rank) * 10;
+    const points = (totalPlayers - rank) * config.game.pointsPerRank;
     const winnerTag = rank === 1 ? ' 👑' : '';
     return `${medal} **#${rank}** ${player.username} - \`+${points} điểm\`${winnerTag}`;
   }).join('\n');
@@ -112,59 +148,19 @@ function gameResultEmbed(rankings, totalPlayers) {
 }
 
 // Embed lỗi
-function errorEmbed(message) {
+function createErrorEmbed(message) {
   return new EmbedBuilder()
     .setColor(COLORS.ERROR)
     .setDescription(`❌ ${message}`);
 }
 
-// Embed phòng chờ
-function waitingRoomEmbed(creator, players, minPlayers) {
-  const playerList = players.map((p, i) => `\`${i + 1}.\` ${p.username}`).join('\n') || 'Chưa có ai';
-
-  return new EmbedBuilder()
-    .setColor(COLORS.PURPLE)
-    .setTitle('🎮 PHÒNG CHỜ - GAME NỐI TỪ')
-    .addFields(
-      {
-        name: '👑 Chủ phòng',
-        value: creator.username,
-        inline: true
-      },
-      {
-        name: `👥 Người chơi (${players.length}/${minPlayers}+)`,
-        value: playerList,
-        inline: true
-      }
-    )
-    .setDescription('Gõ `!join` để tham gia\nChủ phòng gõ `!start` để bắt đầu')
-    .setFooter({ text: `Cần tối thiểu ${minPlayers} người để bắt đầu` })
-    .setTimestamp();
-}
-
-// Embed tham gia thành công
-function joinSuccessEmbed(username, currentCount) {
-  return new EmbedBuilder()
-    .setColor(COLORS.SUCCESS)
-    .setDescription(`✅ **${username}** đã tham gia! (${currentCount} người chơi)`);
-}
-
-// Embed rời phòng
-function leaveEmbed(username, currentCount) {
-  return new EmbedBuilder()
-    .setColor(COLORS.WARNING)
-    .setDescription(`👋 **${username}** đã rời phòng! (${currentCount} người chơi)`);
-}
-
 module.exports = {
   COLORS,
-  gameStartEmbed,
-  turnEmbed,
-  successEmbed,
-  eliminationEmbed,
-  gameResultEmbed,
-  errorEmbed,
-  waitingRoomEmbed,
-  joinSuccessEmbed,
-  leaveEmbed
+  createWaitingEmbed,
+  createGameStartEmbed,
+  createTurnEmbed,
+  createSuccessEmbed,
+  createEliminationEmbed,
+  createResultEmbed,
+  createErrorEmbed
 };
