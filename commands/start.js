@@ -1,4 +1,4 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, UserSelectMenuBuilder } = require('discord.js');
 const config = require('../config/config');
 const { getGame } = require('../games/registry');
 
@@ -38,29 +38,8 @@ function createWaitingEmbed(players, minPlayers) {
     .setTimestamp();
 }
 
-async function execute(message, activeGames, waitingGames) {
-  const gameId = message.channel.id;
-
-  if (activeGames.has(gameId) || waitingGames.has(gameId)) {
-    const errorEmbed = new EmbedBuilder()
-      .setColor(0xED4245)
-      .setDescription('⚠️ Đã có game đang chạy hoặc đang chờ người chơi trong channel này!');
-    return message.reply({ embeds: [errorEmbed] });
-  }
-
-  // Tạo phòng chờ trực tiếp cho game Nối Từ
-  const waitingGame = {
-    channelId: message.channel.id,
-    gameType: 'noitu',
-    players: [],
-    minPlayers: config.game.minPlayers,
-    messageId: null,
-    creatorId: message.author.id
-  };
-
-  waitingGames.set(gameId, waitingGame);
-
-  // Tạo buttons
+// Tạo buttons và menu
+function createComponents() {
   const joinButton = new ButtonBuilder()
     .setCustomId('join_game')
     .setLabel('Tham gia')
@@ -79,12 +58,46 @@ async function execute(message, activeGames, waitingGames) {
     .setStyle(ButtonStyle.Primary)
     .setEmoji('▶️');
 
-  const row = new ActionRowBuilder().addComponents(joinButton, leaveButton, startButton);
+  const inviteMenu = new UserSelectMenuBuilder()
+    .setCustomId('invite_players')
+    .setPlaceholder('📨 Mời người chơi...')
+    .setMinValues(1)
+    .setMaxValues(10);
+
+  const buttonRow = new ActionRowBuilder().addComponents(joinButton, leaveButton, startButton);
+  const inviteRow = new ActionRowBuilder().addComponents(inviteMenu);
+
+  return [buttonRow, inviteRow];
+}
+
+async function execute(message, activeGames, waitingGames) {
+  const gameId = message.channel.id;
+
+  if (activeGames.has(gameId) || waitingGames.has(gameId)) {
+    const errorEmbed = new EmbedBuilder()
+      .setColor(0xED4245)
+      .setDescription('⚠️ Đã có game đang chạy hoặc đang chờ người chơi trong channel này!');
+    return message.reply({ embeds: [errorEmbed] });
+  }
+
+  // Tạo phòng chờ
+  const waitingGame = {
+    channelId: message.channel.id,
+    gameType: 'noitu',
+    players: [],
+    minPlayers: config.game.minPlayers,
+    messageId: null,
+    creatorId: message.author.id
+  };
+
+  waitingGames.set(gameId, waitingGame);
+
   const waitingEmbed = createWaitingEmbed(waitingGame.players, waitingGame.minPlayers);
+  const components = createComponents();
 
   const reply = await message.reply({
     embeds: [waitingEmbed],
-    components: [row]
+    components: components
   });
 
   waitingGame.messageId = reply.id;
@@ -94,5 +107,6 @@ module.exports = {
   name: 'start',
   aliases: ['noitu', 'game', 'play'],
   execute,
-  createWaitingEmbed
+  createWaitingEmbed,
+  createComponents
 };

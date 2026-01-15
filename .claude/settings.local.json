@@ -14,7 +14,8 @@
       "Bash(tasklist:*)",
       "Bash(taskkill:*)",
       "Bash(pm2 restart:*)",
-      "Bash(pm2 logs:*)"
+      "Bash(pm2 logs:*)",
+      "Bash(pm2 delete:*)"
     ]
   }
 }

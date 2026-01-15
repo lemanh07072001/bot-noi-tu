@@ -1,13 +1,10 @@
 const { Events, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 const config = require('../config/config');
 const { getGame } = require('../games/registry');
-const { createWaitingEmbed } = require('../commands/start');
+const { createWaitingEmbed, createComponents } = require('../commands/start');
 
 module.exports = (client, activeGames, waitingGames) => {
   client.on(Events.InteractionCreate, async interaction => {
-    // Chỉ xử lý button
-    if (!interaction.isButton()) return;
-
     // Kiểm tra server/channel
     if (config.serverId && interaction.guild.id !== config.serverId) {
       return interaction.reply({
@@ -25,6 +22,49 @@ module.exports = (client, activeGames, waitingGames) => {
 
     const gameId = interaction.channel.id;
     const waitingGame = waitingGames.get(gameId);
+
+    // Xử lý mời người chơi
+    if (interaction.isUserSelectMenu() && interaction.customId === 'invite_players') {
+      if (!waitingGame) {
+        return interaction.reply({
+          embeds: [new EmbedBuilder().setColor(0xED4245).setDescription('⚠️ Không có game nào đang chờ!')],
+          ephemeral: true
+        });
+      }
+
+      const selectedUsers = interaction.values;
+      const invitedUsers = [];
+
+      for (const userId of selectedUsers) {
+        // Bỏ qua bot và người đã tham gia
+        const user = await interaction.client.users.fetch(userId);
+        if (user.bot) continue;
+        if (waitingGame.players.some(p => p.userId === userId)) continue;
+
+        invitedUsers.push(user);
+      }
+
+      if (invitedUsers.length === 0) {
+        return interaction.reply({
+          embeds: [new EmbedBuilder().setColor(0xFEE75C).setDescription('⚠️ Không có ai để mời (có thể họ đã tham gia hoặc là bot)!')],
+          ephemeral: true
+        });
+      }
+
+      // Gửi tin nhắn mời
+      const mentions = invitedUsers.map(u => `<@${u.id}>`).join(' ');
+      const inviteEmbed = new EmbedBuilder()
+        .setColor(0x5865F2)
+        .setTitle('📨 LỜI MỜI THAM GIA GAME')
+        .setDescription(`${mentions}\n\n**${interaction.user.username}** đã mời bạn tham gia **Game Nối Từ**!\n\nNhấn nút **🎮 Tham gia** ở trên để vào game.`)
+        .setTimestamp();
+
+      await interaction.reply({ embeds: [inviteEmbed] });
+      return;
+    }
+
+    // Chỉ xử lý button từ đây
+    if (!interaction.isButton()) return;
 
     if (!waitingGame && ['join_game', 'leave_game', 'force_start'].includes(interaction.customId)) {
       return interaction.reply({
