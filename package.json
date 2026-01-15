@@ -1,0 +1,20 @@
+{
+  "name": "discord-noi-tu-bot",
+  "version": "1.0.0",
+  "description": "Bot Discord game nối từ với MongoDB",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js",
+    "setup": "node setup.js"
+  },
+  "keywords": ["discord", "bot", "game", "noi-tu"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "mongoose": "^8.0.3",
+    "dotenv": "^16.3.1"
+  }
+}
+

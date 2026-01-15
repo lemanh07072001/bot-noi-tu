@@ -1,0 +1,95 @@
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+const config = require('../config/config');
+
+// Tạo embed phòng chờ
+function createWaitingEmbed(players, minPlayers) {
+  const playerList = players.length > 0
+    ? players.map((p, i) => `\`${i + 1}.\` ${p.username}`).join('\n')
+    : '_Chưa có ai tham gia_';
+
+  const timeoutSeconds = config.game.turnTimeout / 1000;
+
+  return new EmbedBuilder()
+    .setColor(0x9B59B6)
+    .setTitle('🎮 GAME NỐI TỪ - PHÒNG CHỜ')
+    .addFields(
+      {
+        name: `👥 Người chơi (${players.length}/${minPlayers}+)`,
+        value: playerList,
+        inline: true
+      },
+      {
+        name: '📋 Thông tin',
+        value: [
+          `⏱️ Thời gian mỗi lượt: **${timeoutSeconds}s**`,
+          `👤 Tối thiểu: **${minPlayers}** người`,
+          `🏆 Điểm theo thứ hạng`
+        ].join('\n'),
+        inline: true
+      }
+    )
+    .setDescription('Nhấn nút **🎮 Tham gia** để vào game!')
+    .setFooter({ text: players.length >= minPlayers ? '✅ Đủ người! Game sẽ bắt đầu trong 5 giây...' : `⏳ Đang chờ thêm ${minPlayers - players.length} người...` })
+    .setTimestamp();
+}
+
+async function execute(message, activeGames, waitingGames) {
+  const gameId = message.channel.id;
+
+  // Kiểm tra xem đã có game đang chạy hoặc đang chờ chưa
+  if (activeGames.has(gameId) || waitingGames.has(gameId)) {
+    const errorEmbed = new EmbedBuilder()
+      .setColor(0xED4245)
+      .setDescription('⚠️ Đã có game đang chạy hoặc đang chờ người chơi trong channel này!');
+    return message.reply({ embeds: [errorEmbed] });
+  }
+
+  // Tạo game chờ người chơi
+  const waitingGame = {
+    channelId: message.channel.id,
+    players: [],
+    minPlayers: config.game.minPlayers,
+    messageId: null,
+    creatorId: message.author.id
+  };
+
+  waitingGames.set(gameId, waitingGame);
+
+  // Tạo buttons
+  const joinButton = new ButtonBuilder()
+    .setCustomId('join_game')
+    .setLabel('Tham gia')
+    .setStyle(ButtonStyle.Success)
+    .setEmoji('🎮');
+
+  const leaveButton = new ButtonBuilder()
+    .setCustomId('leave_game')
+    .setLabel('Rời phòng')
+    .setStyle(ButtonStyle.Danger)
+    .setEmoji('🚪');
+
+  const startButton = new ButtonBuilder()
+    .setCustomId('force_start')
+    .setLabel('Bắt đầu ngay')
+    .setStyle(ButtonStyle.Primary)
+    .setEmoji('▶️');
+
+  const row = new ActionRowBuilder()
+    .addComponents(joinButton, leaveButton, startButton);
+
+  const waitingEmbed = createWaitingEmbed(waitingGame.players, waitingGame.minPlayers);
+
+  const reply = await message.reply({
+    embeds: [waitingEmbed],
+    components: [row]
+  });
+
+  waitingGame.messageId = reply.id;
+}
+
+module.exports = {
+  name: 'start',
+  aliases: ['noitu'],
+  execute,
+  createWaitingEmbed
+};
