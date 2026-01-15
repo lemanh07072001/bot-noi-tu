@@ -6,7 +6,15 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git branch:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(pm2 start:*)",
+      "Bash(pm2 save:*)",
+      "Bash(pm2 status:*)",
+      "Bash(pm2 list:*)",
+      "Bash(tasklist:*)",
+      "Bash(taskkill:*)",
+      "Bash(pm2 restart:*)",
+      "Bash(pm2 logs:*)"
     ]
   }
 }

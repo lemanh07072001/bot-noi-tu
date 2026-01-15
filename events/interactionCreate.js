@@ -1,9 +1,13 @@
 const { Events, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 const config = require('../config/config');
 const { getGame } = require('../games/registry');
+const { createWaitingEmbed } = require('../commands/start');
 
 module.exports = (client, activeGames, waitingGames) => {
   client.on(Events.InteractionCreate, async interaction => {
+    // Chỉ xử lý button
+    if (!interaction.isButton()) return;
+
     // Kiểm tra server/channel
     if (config.serverId && interaction.guild.id !== config.serverId) {
       return interaction.reply({
@@ -20,34 +24,8 @@ module.exports = (client, activeGames, waitingGames) => {
     }
 
     const gameId = interaction.channel.id;
-
-    // Xử lý Select Menu chọn game
-    if (interaction.isStringSelectMenu() && interaction.customId === 'select_game') {
-      const selectedGameId = interaction.values[0];
-      const gameModule = getGame(selectedGameId);
-
-      if (!gameModule || !gameModule.enabled) {
-        return interaction.reply({
-          embeds: [new EmbedBuilder().setColor(0xFEE75C).setDescription('🔜 Game này đang được phát triển!')],
-          ephemeral: true
-        });
-      }
-
-      if (activeGames.has(gameId) || waitingGames.has(gameId)) {
-        return interaction.reply({
-          embeds: [new EmbedBuilder().setColor(0xED4245).setDescription('⚠️ Đã có game đang chạy hoặc đang chờ!')],
-          ephemeral: true
-        });
-      }
-
-      await gameModule.createRoom(interaction, waitingGames);
-      return;
-    }
-
-    // Chỉ xử lý button
-    if (!interaction.isButton()) return;
-
     const waitingGame = waitingGames.get(gameId);
+
     if (!waitingGame && ['join_game', 'leave_game', 'force_start'].includes(interaction.customId)) {
       return interaction.reply({
         embeds: [new EmbedBuilder().setColor(0xED4245).setDescription('⚠️ Không có game nào đang chờ!')],
@@ -74,7 +52,7 @@ module.exports = (client, activeGames, waitingGames) => {
         isActive: true
       });
 
-      const updatedEmbed = gameModule.createWaitingEmbed(waitingGame.players, waitingGame.minPlayers);
+      const updatedEmbed = createWaitingEmbed(waitingGame.players, waitingGame.minPlayers);
       await interaction.update({ embeds: [updatedEmbed] });
 
       if (waitingGame.players.length >= waitingGame.minPlayers) {
@@ -106,7 +84,7 @@ module.exports = (client, activeGames, waitingGames) => {
         waitingGame.startTimer = null;
       }
 
-      const updatedEmbed = gameModule.createWaitingEmbed(waitingGame.players, waitingGame.minPlayers);
+      const updatedEmbed = createWaitingEmbed(waitingGame.players, waitingGame.minPlayers);
       await interaction.update({ embeds: [updatedEmbed] });
     }
 
